@@ -1,3 +1,4 @@
 *.a
 *.o
+test_loom
 benchmarks
