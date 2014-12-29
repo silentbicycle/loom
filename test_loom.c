@@ -27,6 +27,7 @@ static void setup_cb(void *data) {
     context.limit = 0;
     memset(context.flags, 0xFF, sizeof(context.flags));
     context.cleanup_counter = 0;
+    (void)data;
 }
 
 TEST loom_should_init_and_free(void) {
@@ -54,10 +55,11 @@ static void set_flag_cb(void *env) {
 }
 
 static void set_flag_dont_cleanup_cb(void *env) {
+    (void)env;
     assert(false);  // all tasks should run
 }
 
-TEST loom_should_run_tasks(int threads, int tasks) {
+TEST loom_should_run_tasks(int threads, uintptr_t tasks) {
     if (tasks > MAX_TASKS) { FAILm("too many"); }
 
     loom_config cfg = {
@@ -84,7 +86,7 @@ TEST loom_should_run_tasks(int threads, int tasks) {
     loom_info info;
 
     /* Give them a bit to actually work... */
-    for (int i = 0; i < tasks; i++) {
+    for (uintptr_t i = 0; i < tasks; i++) {
         ASSERT(loom_get_stats(l, &info));
         /* If all tasks have been started, break */
         if (info.backlog_size == 0) { break; }
@@ -99,9 +101,9 @@ TEST loom_should_run_tasks(int threads, int tasks) {
     
     loom_free(l);
 
-    for (int i = 0; i < tasks; i++) {
+    for (uintptr_t i = 0; i < tasks; i++) {
         //ASSERT_EQ_FMT("%zd", i, flags[i]);
-        ASSERT_EQ(i, context.flags[i]);
+        ASSERT_EQ(i, (uintptr_t)context.flags[i]);
     }
 
     PASS();
@@ -119,8 +121,8 @@ TEST loom_should_not_busywait_when_idle(void) {
     clock_t post = clock();
     loom_free(l);
 
-    ASSERT(pre != -1);
-    ASSERT(post != -1);
+    ASSERT(pre != (clock_t)-1);
+    ASSERT(post != (clock_t)-1);
     clock_t delta = post - pre;
     if (0) {
         printf("delta %zd (%.3f sec)\n", delta, delta / (1.0 * CLOCKS_PER_SEC));
@@ -155,7 +157,7 @@ TEST loom_should_run_cleanup_tasks_if_cancelled(void) {
     };
     ASSERT(LOOM_INIT_RES_OK == loom_init(&cfg, &l));
 
-    const int task_count = 10;
+    const uintptr_t task_count = 10;
     for (uintptr_t i = 0; i < task_count; i++) {
         loom_task t = {
             .task_cb = slow_serial_task_cb,

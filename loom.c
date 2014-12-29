@@ -109,7 +109,7 @@ size_t loom_queue_size(struct loom *l) { return l->size; }
  * which are inundating the thread pool with tasks.
  * (*BACKPRESSURE / loom_queue_size(l) gives how full the queue is.) */
 bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
-    LOG(2, " -- enqueuing task %p\n", (void *)t);
+    LOG(3, " -- enqueuing task %p\n", (void *)t);
     if (l == NULL || t == NULL) { return false; }
     if (t->task_cb == NULL) { return false; }
 
@@ -138,7 +138,7 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
 
     size_t c = 0;
     SPIN_INC(l->commit, c);
-    LOG(2, " -- committed %zd\n", c);
+    LOG(4, " -- committed %zd\n", c);
     size_t bp = w - l->done;
     if (backpressure != NULL) { *backpressure = bp; }
     UNLOCK(l);
@@ -181,6 +181,8 @@ bool loom_shutdown(struct loom *l) {
     for (int i = 0; i < l->cur_threads; i++) {
         thread_info *ti = &l->threads[i];
         if (ti->state < LTS_ALERT_SHUTDOWN) {
+            LOG(4, "shutdown: %d -- %d => LTS_ALERT_SHUTDOWN\n",
+                i, ti->state);
             ti->state = LTS_ALERT_SHUTDOWN;
             close(ti->wr_fd);
         }
@@ -188,6 +190,9 @@ bool loom_shutdown(struct loom *l) {
 
     for (int i = 0; i < l->cur_threads; i++) {
         thread_info *ti = &l->threads[i];
+        if (ti->state <= LTS_ALERT_SHUTDOWN) {
+            LOG(3, " -- ti->state %d\n", ti->state);
+        }
         if (ti->state == LTS_CLOSING) {
             LOG(2, " -- joining %d\n", i);
             void *val = NULL;
@@ -198,6 +203,7 @@ bool loom_shutdown(struct loom *l) {
         if (ti->state >= LTS_JOINED) { joined++; }
     }
 
+    LOG(2, " -- joined %u of %d\n", joined, l->cur_threads);
     return joined == l->cur_threads;
 }
 
@@ -223,13 +229,16 @@ static void *thread_task(void *arg) {
     fds[0].fd = ti->rd_fd;
     fds[0].events = POLLIN;
 
-    for (;;) {
+    ti->state = LTS_ACTIVE;
+
+    while (ti->state != LTS_ALERT_SHUTDOWN) {
         bool work_done = false;
 
         alert_pipe_res ap_res = read_alert_pipe(ti, fds, delay);
         if (ap_res == ALERT_IDLE || ap_res == ALERT_NEWTASK) {
             /* no-op */
         } else if (ap_res == ALERT_SHUTDOWN) {
+            ti->state = LTS_ALERT_SHUTDOWN;
             break;
         } else if (ap_res == ALERT_ERROR) {
             assert(false);
@@ -310,7 +319,7 @@ static bool start_worker_if_necessary(struct loom *l) {
         for (;;) {
             cur = l->cur_threads;
             if (CAS(&l->cur_threads, cur, cur + 1)) {
-                LOG(3, " -- spawning a new worker thread %d\n", cur);
+                LOG(2, " -- spawning a new worker thread %d\n", cur);
                 return spawn(l, cur);
             }
         }
@@ -342,11 +351,13 @@ static bool run_tasks(struct loom *l, thread_info *ti) {
     loom_task *qt = NULL;       /* task in queue */
     loom_task t;                /* current task */
 
-    ti->state = LTS_ACTIVE;
-
     /* While work is available... */
     while (l->read < l->commit) {
         for (;;) {
+            /* Break early so it notices the pipe has been closed
+             * and cancels the remaining tasks, rather than
+             * exhausting the work queue before checking. */
+            if (ti->state == LTS_ALERT_SHUTDOWN) { return work; }
             size_t r = l->read;
             if (r == l->commit) { break; }
             LOCK(l);
@@ -362,13 +373,6 @@ static bool run_tasks(struct loom *l, thread_info *ti) {
                 assert(t.task_cb != NULL);
                 t.task_cb(t.env);
                 work = true;
-                /* Break early so it notices the pipe has been closed
-                 * and cancels the remaining tasks, rather than
-                 * exhausting the work queue before checking. */
-                if (ti->state == LTS_ALERT_SHUTDOWN) {
-                    UNLOCK(l);
-                    return work;
-                }
             }
             UNLOCK(l);
         }
