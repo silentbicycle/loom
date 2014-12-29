@@ -7,8 +7,8 @@ CFLAGS +=	${CSTD} -g ${WARN} ${CDEFS} ${CINCS} ${OPTIMIZE}
 LDFLAGS +=	-lpthread
 
 TEST_CFLAGS = 	${CFLAGS}
-TEST_LDFLAGS += ${LDFLAGS} -L. -lloom
-BENCH_LDFLAGS += ${LDFLAGS} -L. -lloom
+TEST_LDFLAGS += -L. -lloom ${LDFLAGS}
+BENCH_LDFLAGS += -L. -lloom ${LDFLAGS}
 
 all: test_${PROJECT} lib${PROJECT}.a benchmarks
 
