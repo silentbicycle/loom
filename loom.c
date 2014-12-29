@@ -195,7 +195,7 @@ bool loom_shutdown(struct loom *l) {
             ti->state = LTS_JOINED;
         }
 
-        if (ti->state == LTS_JOINED) { joined++; }
+        if (ti->state >= LTS_JOINED) { joined++; }
     }
 
     return joined == l->cur_threads;
