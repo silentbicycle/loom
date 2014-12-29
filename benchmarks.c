@@ -129,6 +129,7 @@ int main(int argc, char **argv) {
             .max_threads = cfg.max_threads,
         };
         struct loom *l = NULL;
+        if (cfg.verbosity > 1) { printf(" -- loom_init...\n"); }
         loom_init_res res = loom_init(&lcfg, &l);
         assert(res == LOOM_INIT_RES_OK);
 
@@ -148,6 +149,18 @@ int main(int argc, char **argv) {
           + 1e-06 * (tv_post.tv_usec - tv_pre.tv_usec);
         printf(" -- %-10s limit %zd -- wall %.3f clock %.3f\n",
             b->name, cfg.limit, tdelta, (post - pre) / (1.0 * CLOCKS_PER_SEC));
+
+        const int MAX_SHUTDOWN_SECONDS = 10;
+        if (cfg.verbosity > 1) { printf(" -- loom_shutdown...\n"); }
+        for (int i = 0; i < 10 * MAX_SHUTDOWN_SECONDS; i++) {
+            if (loom_shutdown(l)) { break; }
+            poll(NULL, 0, 100);
+            if (i > 0 && cfg.verbosity > 1 && ((i / 10) == 0)) {
+                printf(" -- loom_shutdown, %d seconds have passed\n", i / 10);
+            }
+        }
+
+        if (cfg.verbosity > 1) { printf(" -- loom_free...\n"); }
         loom_free(l);
     }
     return 0;

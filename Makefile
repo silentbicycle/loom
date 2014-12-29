@@ -32,7 +32,7 @@ test: ./test_${PROJECT}
 	./test_${PROJECT}
 
 bench: benchmarks
-	./benchmarks -v
+	./benchmarks -v -v
 
 benchmarks: benchmarks.o lib${PROJECT}.a
 	${CC} -o $@ $< ${BENCH_LDFLAGS}
