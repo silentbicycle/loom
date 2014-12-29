@@ -152,13 +152,15 @@ int main(int argc, char **argv) {
 
         const int MAX_SHUTDOWN_SECONDS = 10;
         if (cfg.verbosity > 1) { printf(" -- loom_shutdown...\n"); }
-        for (int i = 0; i < 10 * MAX_SHUTDOWN_SECONDS; i++) {
+        int i = 0;
+        for (i = 0; i < 10 * MAX_SHUTDOWN_SECONDS; i++) {
             if (loom_shutdown(l)) { break; }
             poll(NULL, 0, 100);
             if (i > 0 && cfg.verbosity > 1 && ((i % 10) == 0)) {
                 printf(" -- loom_shutdown, %d seconds have passed\n", i / 10);
             }
         }
+        if (i == 10 * MAX_SHUTDOWN_SECONDS) { assert(false); }
 
         if (cfg.verbosity > 1) { printf(" -- loom_free...\n"); }
         loom_free(l);
