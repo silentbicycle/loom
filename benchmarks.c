@@ -4,8 +4,10 @@
 #include <string.h>
 #include <assert.h>
 #include <err.h>
+#include <time.h>
 #include <sys/time.h>
 #include <poll.h>
+#include <getopt.h>
 
 #include "loom.h"
 
@@ -164,8 +166,9 @@ static void bench_noop(config *cfg, struct loom *l) {
     if (0 != gettimeofday(&tv, NULL)) { assert(false); }
     last_second = tv.tv_sec;
 
+    loom_info info;
     const size_t limit = cfg->limit;
-    int shift = cfg->ring_sz2 / 2;
+    int shift = 6;
     for (int ts = 0; ts < limit; ts++) {
         loom_task t = {
             .task_cb = noop_cb,
@@ -176,14 +179,22 @@ static void bench_noop(config *cfg, struct loom *l) {
             if (loom_enqueue(l, &t, &backpressure)) { break; }
             int wait = backpressure >> shift;
             if (wait > 0) {
-                /* printf("wait %d\n", wait); */
                 poll(NULL, 0, wait);
             }
         }
         if (i == RETRIES) { assert(false); }
+
+        if (cfg->verbosity > 0) {
+            if (0 != gettimeofday(&tv, NULL)) { assert(false); }
+            if (tv.tv_sec != last_second) {
+                last_second = tv.tv_sec;
+                if (!loom_get_stats(l, &info)) { assert(false); }
+                printf("%ld: -- %d enqueued, backlog %zd\n",
+                    last_second, ts, info.backlog_size);
+            }
+        }
     }
 
-    loom_info info;
     do {
         if (!loom_get_stats(l, &info)) { assert(false); }
         poll(NULL, 0, 5); //info.backlog_size / 10);
@@ -259,7 +270,7 @@ static void pi_delay(config *cfg, struct loom *l, bench_delay_cb delay_cb) {
             if (tv.tv_sec != last_second) {
                 last_second = tv.tv_sec;
                 if (!loom_get_stats(l, &info)) { assert(false); }
-                printf("%ld: -- %zd enqueued, backlog %zd\n",
+                printf("%ld: -- %d enqueued, backlog %zd\n",
                     last_second, ts, info.backlog_size);
             }
         }
@@ -286,7 +297,7 @@ static void bench_pi(config *cfg, struct loom *l) {
 }
 
 static size_t small_delay_cb(int nth_test) {
-    const uint32_t LARGE_PRIME = ((1 << 31L) - 1);
+    const uint32_t LARGE_PRIME = ((1L << 31L) - 1);
     return ((1 << 5) - 1) & (nth_test * LARGE_PRIME);
 }
 
@@ -335,7 +346,7 @@ static void bench_wakeup(config *cfg, struct loom *l) {
                 if (tv.tv_sec != last_second) {
                     last_second = tv.tv_sec;
                     if (!loom_get_stats(l, &info)) { assert(false); }
-                    printf("%ld: -- %zd enqueued, backlog %zd\n",
+                    printf("%ld: -- %d enqueued, backlog %zd\n",
                         last_second, ts, info.backlog_size);
                 }
             }

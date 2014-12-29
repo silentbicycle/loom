@@ -109,7 +109,7 @@ size_t loom_queue_size(struct loom *l) { return l->size; }
  * which are inundating the thread pool with tasks.
  * (*BACKPRESSURE / loom_queue_size(l) gives how full the queue is.) */
 bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
-    LOG(2, " -- enqueuing task %p\n", t);
+    LOG(2, " -- enqueuing task %p\n", (void *)t);
     if (l == NULL || t == NULL) { return false; }
     if (t->task_cb == NULL) { return false; }
 
@@ -133,8 +133,8 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
     loom_task *qt = &l->ring[w & l->mask];
     memcpy(qt, t, sizeof(*qt));
 
-    LOG(4, " -- saving %p(%zd) #{%p, %p, %p}\n",
-        qt, w, t->task_cb, t->cleanup_cb, t->env);
+    LOG(4, " -- saving %p(%zd), env %p\n",
+        (void *)qt, w, (void *)t->env);
 
     size_t c = 0;
     SPIN_INC(l->commit, c);
@@ -166,6 +166,7 @@ bool loom_get_stats(struct loom *l, loom_info *info) {
     info->active_threads = active;
     info->total_threads = l->cur_threads;
     info->backlog_size = l->commit - l->done;
+    assert(l->commit >= l->done);
 
     return true;
 }
@@ -309,7 +310,7 @@ static bool start_worker_if_necessary(struct loom *l) {
         for (;;) {
             cur = l->cur_threads;
             if (CAS(&l->cur_threads, cur, cur + 1)) {
-                LOG(3, " -- spawning a new worker thread %zd\n", cur);
+                LOG(3, " -- spawning a new worker thread %d\n", cur);
                 return spawn(l, cur);
             }
         }
@@ -349,12 +350,12 @@ static bool run_tasks(struct loom *l, thread_info *ti) {
             size_t r = l->read;
             if (r == l->commit) { break; }
             LOCK(l);
-            if (CAS(&l->read, r, r + 1)) {
+            if (r < l->commit && CAS(&l->read, r, r + 1)) {
                 if (ti->state == LTS_ASLEEP) { ti->state = LTS_ACTIVE; }
                 qt = &l->ring[r & l->mask];
                 t = *qt;
-                LOG(3, " -- running %p(%zd) #{%p, %p, %p}\n",
-                    qt, r, t.task_cb, t.cleanup_cb, t.env);
+                LOG(3, " -- running %p(%zd), env %p\n",
+                    (void *)qt, r, (void *)t.env);
                 size_t d = l->done;
                 SPIN_INC(l->done, d);
                 
@@ -376,7 +377,7 @@ static bool run_tasks(struct loom *l, thread_info *ti) {
 }
 
 static void clean_up_cancelled_tasks(thread_info *ti) {
-    LOG(2, " -- cleanup for thread %p\n", pthread_self());
+    LOG(2, " -- cleanup for thread %p\n", (void *)pthread_self());
     struct loom *l = ti->l;
     loom_task *qt = NULL;       /* task in queue */
     loom_task t;                /* current task */
