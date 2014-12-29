@@ -126,8 +126,9 @@ TEST loom_should_not_busywait_when_idle(void) {
         printf("delta %zd (%.3f sec)\n", delta, delta / (1.0 * CLOCKS_PER_SEC));
     }
 
-    ASSERTm("should use less than 10 msec of CPU in 5 seconds idle",
-        delta / (1.0 * CLOCKS_PER_SEC) < 0.01);
+    /* It should use significantly less than this... */
+    ASSERTm("should use less than 100 msec of CPU in 5 seconds idle",
+        delta / (1.0 * CLOCKS_PER_SEC) < 0.1);
     PASS();
 }
 
