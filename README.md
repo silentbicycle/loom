@@ -123,4 +123,4 @@ empty.
 
 - Performance tuning
 
-- Force thread shutdown (via `pthread_kill`?)
+- Force thread shutdown (via `pthread_cancel` or `pthread_kill`?)
