@@ -3,6 +3,9 @@
 Loom creates a task queue and pool of worker threads. Workers run tasks
 as they're scheduled, and otherwise sleep until work is available.
 
+FIXME: This has a pretty serious race condition, don't use it yet.
+
+
 ## Build Status
 
   [![Build Status](https://travis-ci.org/silentbicycle/loom.png)](http://travis-ci.org/silentbicycle/loom)

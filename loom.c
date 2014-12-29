@@ -136,6 +136,10 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
     LOG(4, " -- saving %p(%zd), env %p\n",
         (void *)qt, w, (void *)t->env);
 
+    /* FIXME: SPIN_INC is insufficient here -- one thread can inc.
+     *     l->commit and commit another's write before it's ready.
+     *     We need to decouple marking as ready from the counter;
+     *     the same is likely to happen on the read -> release side. */
     size_t c = 0;
     SPIN_INC(l->commit, c);
     LOG(4, " -- committed %zd\n", c);

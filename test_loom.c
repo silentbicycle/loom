@@ -186,9 +186,15 @@ TEST loom_should_run_cleanup_tasks_if_cancelled(void) {
     PASS();
 }
 
+TEST fail_with_warning(void) {
+    FAILm("This has a pretty serious race condition, don't use it yet.");
+}
+
 SUITE(suite) {
     SET_SETUP(setup_cb, NULL);
 
+    RUN_TEST(fail_with_warning);
+    return;
     RUN_TEST(loom_should_init_and_free);
     RUN_TESTp(loom_should_init_and_free_and_join, 1);
     RUN_TESTp(loom_should_init_and_free_and_join, 8);
