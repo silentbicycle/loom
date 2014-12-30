@@ -20,7 +20,7 @@ static void sleep_msec(int msec) {
 static struct test_context {
     int limit;
     int flags[MAX_TASKS];
-    int cleanup_counter;
+    uintptr_t cleanup_counter;
 } context;
 
 static void setup_cb(void *data) {
