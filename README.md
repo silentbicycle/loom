@@ -3,8 +3,6 @@
 Loom creates a task queue and pool of worker threads. Workers run tasks
 as they're scheduled, and otherwise sleep until work is available.
 
-FIXME: This has a pretty serious race condition, don't use it yet.
-
 
 ## Build Status
 
@@ -109,6 +107,12 @@ released. Tasks are copied into the ring queue by value when written,
 and read into the worker thread's stack and released immediately to help
 keep the ring queue from filling up. Because a ring buffer is used, the
 offsets can wrap, reusing memory.
+
+To avoid a race condition on releasing writes or reads (by just
+incrementing the commit/done offsets), producer and consumer threads
+mark a write or read as complete by a mark field, and then atomically
+compare-and-swap the commit or done offset to advance past any that have
+been marked already.
 
 Worker threads attempt to request tasks from the queue, and if the queue
 is empty (the commit offset is the same as the read offset), they poll

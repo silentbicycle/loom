@@ -6,7 +6,8 @@
 #define DEF_MAX_DELAY 1000
 #define DEF_MAX_THREADS 8
 
-/* Max for log2(size) of task queue ring buffer. */
+/* Max for log2(size) of task queue ring buffer.
+ * The most significant bit of each cell is used as a mark. */
 #define LOOM_MAX_RING_SZ2 ((8 * sizeof(size_t)) - 1)
 
 /* Use mutexes instead of CAS?
@@ -33,11 +34,52 @@ typedef struct {
     struct loom *l;             /* pointer to thread pool */
 } thread_info;
 
+/* loom_task, with an added mark field. This is used mark whether a task is
+ * ready to have the l->commit or l->done offsets advanced over it.
+ *
+ * . The mark bytes are all memset to 0xFF at init.
+ * 
+ * . The l->write offset can only advance across a cell if its mark
+ *   has the most significant bit set.
+ *    
+ * . When a cell has been reserved for write (by atomically CAS-ing
+ *   l->write to increment past it; during this time, only the producer
+ *   thread reserving it can write to it), it is marked for commit by
+ *   setting the mark to the write offset. Since the ring buffer wraps,
+ *   this means the next time the same cell is used, the mark value will
+ *   be based on the previous pass's write offset (l->write - l->size),
+ *   which will no longer be valid.
+ *
+ * . After a write is committed, the producer thread does a CAS loop to
+ *   advance l->commit over every marked cell. Since putting a task in
+ *   or out of the queue is just a memcpy of an ltask to/from the
+ *   caller's stack, it should never block for long, and have little
+ *   variability in latency. It also doesn't matter which producer
+ *   thread advances l->commit.
+ *
+ * . Similarly, a consumer atomically CASs l->read to reserve a cell
+ *   for read, copies its task into its call stack, and then sets
+ *   the cell mask to the negated read offset (~l->read). This means
+ *   that it will always be distinct from the commit mark, distinct
+ *   from the last spin around the ring buffer, and have the most
+ *   significant bit set so that l->write knows it's free to advance
+ *   over it.
+ *
+ * . Also, after the read is released, the consumer thread does a
+ *   CAS loop to advance l->done over every marked cell. This behaves
+ *   just like the CAS loop to advance l->commit above. */
+typedef struct {
+    loom_task_cb *task_cb;
+    loom_cleanup_cb *cleanup_cb;
+    void *env;
+    size_t mark;
+} ltask;
+
 /* Offsets in ring buffer. Slot acquisition happens in the order
  * [Write, Commit, Read, Done]. For S(x) == loom->ring[x]:
  *          x >= W:  undefined
  *     C <= x <  W:  reserved for write
- *     R <= x <  C:  committed, available for request
+ *     R <= x <  C:  committed, available for read
  *     D <= x <  R:  being processed
  *          x <  D:  freed
  *
@@ -60,7 +102,6 @@ typedef struct {
  *
  *     D <= R <= C <= W
  */
-
 typedef struct loom {
     #if LOOM_USE_LOCKING
     pthread_mutex_t lock;
@@ -76,7 +117,7 @@ typedef struct loom {
     uint16_t max_delay;         /* max poll(2) sleep for idle tasks */
     uint16_t cur_threads;       /* current live threads */
     uint16_t max_threads;       /* max # of threads to create */
-    loom_task *ring;            /* ring buffer */
+    ltask *ring;                /* ring buffer */
     thread_info threads[];      /* thread metadata */
 } loom;
 
@@ -94,6 +135,9 @@ static bool spawn(struct loom *l, int id);
 static void clean_up_cancelled_tasks(thread_info *ti);
 static alert_pipe_res read_alert_pipe(thread_info *ti,
     struct pollfd *pfd, int delay);
+static void send_wakeup(struct loom *l);
+static void update_marked_commits(struct loom *l);
+static void update_marked_done(struct loom *l);
 
 #ifndef LOOM_LOG_LEVEL
 #define LOOM_LOG_LEVEL 1
@@ -112,15 +156,6 @@ static alert_pipe_res read_alert_pipe(thread_info *ti,
 #else
 #define LOG(LVL, ...)
 #endif
-
-/* Use an atomic CAS to increment a value, retrying until success. */
-#define SPIN_INC(FIELD, VAR)                                           \
-    do {                                                               \
-        for (;;) {                                                     \
-            VAR = FIELD;                                               \
-            if (CAS(&FIELD, VAR, VAR + 1)) { break; }                  \
-        }                                                              \
-    } while (0)                                                        \
 
 #if LOOM_USE_LOCKING
 #define LOCK(L)   if (0 != pthread_mutex_lock(&(L)->lock)) { assert(false); }

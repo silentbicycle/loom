@@ -2,7 +2,7 @@ PROJECT =	loom
 OPTIMIZE =	-O3
 WARN =		-Wall -pedantic -Wextra
 CSTD +=		-std=c99 #-D_POSIX_C_SOURCE=1 -D_C99_SOURCE
-
+#CDEFS +=	-DNDEBUG
 CFLAGS +=	${CSTD} -g ${WARN} ${CDEFS} ${CINCS} ${OPTIMIZE}
 LDFLAGS +=	-lpthread
 

@@ -5,10 +5,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Version 0.1.0. */
+/* Version 0.1.1. */
 #define LOOM_VERSION_MAJOR 0
 #define LOOM_VERSION_MINOR 1
-#define LOOM_VERSION_PATCH 0
+#define LOOM_VERSION_PATCH 1
 
 /* Opaque type for a thread pool. */
 struct loom;

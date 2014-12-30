@@ -8,6 +8,7 @@
 #include <sys/time.h>
 #include <poll.h>
 #include <getopt.h>
+#include <pthread.h>
 
 #include "loom.h"
 
@@ -27,6 +28,7 @@ static benchmark_cb bench_noop;
 static benchmark_cb bench_pi;
 static benchmark_cb bench_pi_with_delay;
 static benchmark_cb bench_wakeup;
+static benchmark_cb bench_multiprod;
 
 typedef struct {
     const char *name;
@@ -44,10 +46,13 @@ static benchmark benchmarks[] = {
      bench_pi_with_delay, false, 1000},
     {"wakeup", "add tasks w/ delay to stress worker sleep/wakeup",
      bench_wakeup, true, 1000},
+    {"multiprod", "stress with multiple producers",
+     bench_multiprod, true, 1000},
 };
 
 static void usage(void) {
     fprintf(stderr,
+        "Benchmarks and stress tests for loom\n"
         "Usage: benchmarks [-h] [-b BENCHMARK_NAME] [-d MAX_DELAY] [-i INIT_THREADS]\n"
         "                  [-l LIMIT] [-r RING_SZ2] [-t MAX_THREADS] [-v]\n"
         "\n");
@@ -382,4 +387,63 @@ static void bench_wakeup(config *cfg, struct loom *l) {
             }
         }
     } while (info.backlog_size > 0);
+}
+
+typedef struct {
+    pthread_t t;
+    int limit;
+    struct loom *l;
+} multiprod_env;
+
+static void *multiprod_thread_task(void *arg);
+
+/* Stress multiple producers as well as multiple consumers. */
+static void bench_multiprod(config *cfg, struct loom *l) {
+    size_t producers = cfg->arg2;
+    if (producers == 0) { producers = 4; }
+
+    multiprod_env prods[producers];
+    memset(prods, 0, producers * sizeof(prods[0]));
+
+    for (size_t i = 0; i < producers; i++) {
+        prods[i].limit = cfg->limit;
+        prods[i].l = l;
+        if (0 != pthread_create(&prods[i].t, NULL,
+                multiprod_thread_task, (void *)&prods[i])) {
+            assert(false);
+        }
+    }
+
+    for (size_t i = 0; i < producers; i++) {
+        void *out = NULL;
+        if (0 != pthread_join(prods[i].t, &out)) {
+            assert(false);
+        }
+    }    
+}
+
+static void *multiprod_thread_task(void *arg) {
+    multiprod_env *env = (multiprod_env *)arg;
+    assert(arg);
+
+    struct loom *l = env->l;
+    int shift = 6;
+    size_t backpressure = 0;
+
+    for (int t = 0; t < env->limit; t++) {
+        loom_task t = {
+            .task_cb = noop_cb,
+        };
+
+        int i = 0;
+        for (i = 0; i < RETRIES; i++) {
+            if (loom_enqueue(l, &t, &backpressure)) { break; }
+            int wait = backpressure >> shift;
+            if (wait > 0) {
+                poll(NULL, 0, wait);
+            }
+        }
+        if (i == RETRIES) { assert(false); }
+    }
+    return NULL;
 }
