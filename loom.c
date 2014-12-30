@@ -140,7 +140,7 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
          * been memset to all 0xFF the first time around, or because
          * l->ring[w * l->mask] has been set to w (write commit) and
          * then to ~r (when r == w), releasing it. */
-        const size_t mark_bit = (1L << (8 * sizeof(size_t)) - 1);
+        const size_t mark_bit = 1L << (8 * sizeof(size_t) - 1);
 
         if ((l->ring[w & l->mask].mark & mark_bit) == 0) {
             UNLOCK(l);
