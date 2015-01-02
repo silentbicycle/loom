@@ -281,7 +281,7 @@ static void *thread_task(void *arg) {
     ti->state = LTS_ACTIVE;
 
     while (ti->state != LTS_ALERT_SHUTDOWN) {
-        bool work_done = false;
+        bool did_work = false;
 
         alert_pipe_res ap_res = read_alert_pipe(ti, fds, delay);
         if (ap_res == ALERT_IDLE || ap_res == ALERT_NEWTASK) {
@@ -292,10 +292,10 @@ static void *thread_task(void *arg) {
         } else if (ap_res == ALERT_ERROR) {
             assert(false);
         }
-        work_done = run_tasks(l, ti);
+        did_work = run_tasks(l, ti);
 
         /* Exponential back-off */
-        if (work_done) {
+        if (did_work) {
             delay = 0;
         } else if (delay == 0) {
             delay = 1;
