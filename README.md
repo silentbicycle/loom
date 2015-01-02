@@ -1,7 +1,14 @@
 # loom -- A lock-less thread pool for C99
 
-Loom creates a task queue and pool of worker threads. Workers run tasks
+loom creates a task queue and pool of worker threads. Workers run tasks
 as they're scheduled, and otherwise sleep until work is available.
+
+Note: This is still very early in development. I have stress-tested it
+on multi-core x86 / x86-64 systems, and it should be safely lock-less
+there, but there may be race conditions on hardware platforms with
+different memory barriers. `__sync_bool_compare_and_swap` is used
+internally, so portability will be limited to platforms / compilers
+where that functionality is available.
 
 
 ## Build Status
@@ -130,4 +137,4 @@ empty.
 
 - Performance tuning
 
-- Force thread shutdown (via `pthread_cancel` or `pthread_kill`?)
+- Optional thread shutdown (most likely via `pthread_cancel`)

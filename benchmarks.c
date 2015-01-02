@@ -152,8 +152,9 @@ int main(int argc, char **argv) {
 
         double tdelta = (tv_post.tv_sec - tv_pre.tv_sec)
           + 1e-06 * (tv_post.tv_usec - tv_pre.tv_usec);
-        printf(" -- %-10s limit %zd -- wall %.3f clock %.3f\n",
-            b->name, cfg.limit, tdelta, (post - pre) / (1.0 * CLOCKS_PER_SEC));
+        printf(" -- %-10s limit %zd -- wall %.3f clock %.3f => %.1f / sec\n",
+            b->name, cfg.limit, tdelta, (post - pre) / (1.0 * CLOCKS_PER_SEC),
+            cfg.limit / tdelta);
 
         const int MAX_SHUTDOWN_SECONDS = 1;
         if (cfg.verbosity > 1) { printf(" -- loom_shutdown...\n"); }
