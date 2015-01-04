@@ -67,7 +67,7 @@ loom_init_res loom_init(loom_config *cfg, struct loom **l);
 
 /* Enqueue a task, which will be copied in to the thread pool by value.
  * Returns whether the task was successfully enqueued - it can fail if
- * the queue is full or if L on T are NULL.
+ * the queue is full or if L or T are NULL.
  * 
  * If BACKPRESSURE is non-NULL, the current backlog size will be written
  * into it. This is a good way to push back against parts of the system
