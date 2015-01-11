@@ -31,8 +31,11 @@ test_${PROJECT}: test_${PROJECT}.o ${TEST_OBJS} lib${PROJECT}.a
 test: ./test_${PROJECT}
 	./test_${PROJECT}
 
+# Benchmark, with a larger-than-default ring buffer size (16),
+# because the no-op benchmark is designed to maximize thrashing
+# against a full queue.
 bench: benchmarks
-	./benchmarks -v -v
+	./benchmarks -v -r 16
 
 benchmarks: benchmarks.o lib${PROJECT}.a
 	${CC} -o $@ $< ${BENCH_LDFLAGS}
