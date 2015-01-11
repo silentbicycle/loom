@@ -35,7 +35,7 @@ loom_init_res loom_init(loom_config *cfg, struct loom **l) {
     if (cfg->max_delay == 0) { cfg->max_delay = DEF_MAX_DELAY; }
     if (cfg->max_threads == 0) { cfg->max_threads = DEF_MAX_THREADS; }
 
-    bool mutex_init = false;
+    int mutex_init = 0;
     size_t loom_sz = sizeof(**l) + cfg->max_threads * sizeof(thread_info);
     struct loom *pl = calloc(1, loom_sz);
     if (pl == NULL) { return LOOM_INIT_RES_ERROR_MEMORY; }
@@ -57,8 +57,10 @@ loom_init_res loom_init(loom_config *cfg, struct loom **l) {
     pl->max_threads = cfg->max_threads;
 
     #if LOOM_USE_LOCKING
-    if (0 != pthread_mutex_init(&pl->lock, NULL)) { goto cleanup; }
-    mutex_init = true;
+    for (int i = 0; i < LOCK_STRIPES; i++) {
+        if (0 != pthread_mutex_init(&pl->lock[i], NULL)) { goto cleanup; }
+        mutex_init++;
+    }
     #endif
 
     for (int i = 0; i < cfg->init_threads; i++) {
@@ -88,7 +90,9 @@ cleanup:
         }
 
         #if LOOM_USE_LOCKING
-        if (mutex_init) { pthread_mutex_destroy(&pl->lock); }
+        for (int i = 0; i < mutex_init; i++) {
+            pthread_mutex_destroy(&pl->lock[i]);
+        }
         #else
         (void)mutex_init;
         #endif
@@ -118,21 +122,23 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
 
     /* Start more worker threads if necessary, using a spin/CAS loop to
      * avoid a race when reserving the slot for the new thread. */
-    LOCK(l);
-    if (!start_worker_if_necessary(l)) {
-        UNLOCK(l);
-        return false;
-    }
+    size_t lock_id = l->write;
+    LOCK(l, lock_id);
+    bool res = start_worker_if_necessary(l);
+    UNLOCK(l, lock_id);
+    if (!res) { return false; }
 
     /* Reserve write, ensuring that it never wraps and clobbers
      * anything protected by l->done. */
     size_t w = 0;
     for (;;) {
         w = l->write;
+        lock_id = w;
+        LOCK(l, lock_id);
         const size_t fill_sz = l->write - l->done;
         if (fill_sz > l->mask) {
             if (backpressure) { *backpressure = fill_sz; }
-            UNLOCK(l);
+            UNLOCK(l, lock_id);
             return false;
         }
 
@@ -143,18 +149,21 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
         const size_t mark_bit = 1L << (8 * sizeof(size_t) - 1);
 
         if ((l->ring[w & l->mask].mark & mark_bit) == 0) {
-            UNLOCK(l);
+            UNLOCK(l, lock_id);
             return false;
         }
 
         if (CAS(&l->write, w, w + 1)) {
             if (backpressure) { *backpressure = fill_sz; }
+            UNLOCK(l, lock_id);
             break;
         }
+        UNLOCK(l, lock_id);
     }
 
     /* qt = &l->ring[w] is now reserved, and l->write is w + 1. */
     ltask *qt = &l->ring[w & l->mask];
+    if (qt->mark == w) { printf("w %zd\n", w); }
     assert(qt->mark != w);      /* not yet marked */
 
     qt->task_cb = t->task_cb;
@@ -166,13 +175,13 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
 
     qt->mark = w;               /* Mark as committed */
 
+    LOCK(l, lock_id);
     /* Advance commit counter through marked cells. */
     update_marked_commits(l);
+    UNLOCK(l, lock_id);
 
     size_t bp = w - l->done;
     if (backpressure != NULL) { *backpressure = bp; }
-
-    UNLOCK(l);
 
     send_wakeup(l);
     return true;
@@ -246,6 +255,16 @@ bool loom_shutdown(struct loom *l) {
             LOG(2, " -- joining %d\n", i);
             void *val = NULL;
             if (0 != pthread_join(ti->t, &val)) { assert(false); }
+            if (joined == l->cur_threads - 1) {
+                #if LOOM_USE_LOCKING
+                /* Destroy mutexes when joining last thread,
+                 * so loom_shutdown will be idempotent. */
+                for (int i = 0; i < LOCK_STRIPES; i++) {
+                    int res = pthread_mutex_destroy(&l->lock[i]);
+                    if (0 != res) { assert(false); }
+                }
+                #endif
+            }
             ti->state = LTS_JOINED;
         }
 
@@ -409,7 +428,7 @@ static bool run_tasks(struct loom *l, thread_info *ti) {
             if (ti->state == LTS_ALERT_SHUTDOWN) { return work; }
             size_t r = l->read;
             if (r == l->commit) { break; }
-            LOCK(l);
+            LOCK(l, r);
             if (r < l->commit && CAS(&l->read, r, r + 1)) {
                 /* &l->ring[r & l->mask] is reserved, and read is r + 1 */
                 if (ti->state == LTS_ASLEEP) { ti->state = LTS_ACTIVE; }
@@ -432,7 +451,7 @@ static bool run_tasks(struct loom *l, thread_info *ti) {
                 t.task_cb(t.env);
                 work = true;
             }
-            UNLOCK(l);
+            UNLOCK(l, r);
         }
     }
     return work;
@@ -460,7 +479,7 @@ static void clean_up_cancelled_tasks(thread_info *ti) {
     for (;;) {
         size_t r = l->read;
         if (r == l->commit) { break; }
-        LOCK(l);
+        LOCK(l, r);
         if (CAS(&l->read, r, r + 1)) {
             qt = &l->ring[r & l->mask];
             memcpy(&t, qt, sizeof(t));
@@ -468,7 +487,7 @@ static void clean_up_cancelled_tasks(thread_info *ti) {
             update_marked_done(l);
             if (t.cleanup_cb != NULL) { t.cleanup_cb(t.env); }
         }
-        UNLOCK(l);
+        UNLOCK(l, r);
     }
     close(ti->rd_fd);
 }

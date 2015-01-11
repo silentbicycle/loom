@@ -13,7 +13,21 @@
 /* Use mutexes instead of CAS?
  * This is mostly for benchmarking -- the lockless mode should be
  * significantly faster in most cases. */
+#ifndef LOOM_USE_LOCKING
 #define LOOM_USE_LOCKING 0
+#endif
+
+#if LOOM_USE_LOCKING
+    /* Lock striping: use 2^N locks, based on the bottom N bits of the
+     * cell ID. This significantly reduces overhead from locking, since
+     * contention on individual locks is what slows thing down.
+     *
+     * This has adds (sizeof(pthread_mutex_t) * LOCK_STRIPES) bytes
+     * to the size of the struct loom. */
+    #define LOCK_STRIPES_LOG2 (7)
+    #define LOCK_STRIPES (1 << LOCK_STRIPES_LOG2)
+    #define LOCK_STRIPES_MASK (LOCK_STRIPES - 1)
+#endif
 
 typedef enum {
     LTS_INIT,                   /* initializing */
@@ -104,7 +118,8 @@ typedef struct {
  */
 typedef struct loom {
     #if LOOM_USE_LOCKING
-    pthread_mutex_t lock;
+    // striped locks
+    pthread_mutex_t lock[1 << LOCK_STRIPES_LOG2];
     #endif
     /* Offsets. See block comment above. */
     size_t write;
@@ -158,12 +173,14 @@ static void update_marked_done(struct loom *l);
 #endif
 
 #if LOOM_USE_LOCKING
-#define LOCK(L)   if (0 != pthread_mutex_lock(&(L)->lock)) { assert(false); }
-#define UNLOCK(L) if (0 != pthread_mutex_unlock(&(L)->lock)) { assert(false); }
+#define LOCK(L, ID)                                                    \
+    if (0 != pthread_mutex_lock(&(L)->lock[ID & LOCK_STRIPES_MASK])) { assert(false); }
+#define UNLOCK(L, ID)                                                  \
+    if (0 != pthread_mutex_unlock(&(L)->lock[ID & LOCK_STRIPES_MASK])) { assert(false); }
 #define CAS(PTR, OLD, NEW) (*PTR == (OLD) ? (*PTR = (NEW), 1) : 0)
 #else
-#define LOCK(L)   /* no-op */
-#define UNLOCK(L) /* no-op */
+#define LOCK(L, ID)    do { (void)ID; } while (0)  /* no-op */
+#define UNLOCK(L, ID)  do { (void)ID; } while (0)  /* no-op */
 #define CAS(PTR, OLD, NEW) (__sync_bool_compare_and_swap(PTR, OLD, NEW))
 #endif
 
