@@ -4,4 +4,4 @@ compiler:
     - clang
     - gcc
 
-script: make ci && env CDEFS=-DLOOM_USE_LOCKING=1 make -e ci
+script: make ci && make clean && env CDEFS=-DLOOM_USE_LOCKING=1 make -e ci
