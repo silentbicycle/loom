@@ -2,7 +2,7 @@
 #define LOOM_INTERNAL_H
 
 /* Defaults. */
-#define DEF_RING_SZ2 8
+#define DEF_RING_SZ2 10
 #define DEF_MAX_DELAY 1000
 #define DEF_MAX_THREADS 8
 
