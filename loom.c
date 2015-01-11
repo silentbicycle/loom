@@ -122,25 +122,14 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
 
     /* Start more worker threads if necessary, using a spin/CAS loop to
      * avoid a race when reserving the slot for the new thread. */
-    size_t lock_id = l->write;
-    LOCK(l, lock_id);
-    bool res = start_worker_if_necessary(l);
-    UNLOCK(l, lock_id);
-    if (!res) { return false; }
+    if (!start_worker_if_necessary(l)) { return false; }
 
     /* Reserve write, ensuring that it never wraps and clobbers
      * anything protected by l->done. */
     size_t w = 0;
     for (;;) {
         w = l->write;
-        lock_id = w;
-        LOCK(l, lock_id);
         const size_t fill_sz = l->write - l->done;
-        if (fill_sz > l->mask) {
-            if (backpressure) { *backpressure = fill_sz; }
-            UNLOCK(l, lock_id);
-            return false;
-        }
 
         /* Check if the highest bit is set, either because the cell has
          * been memset to all 0xFF the first time around, or because
@@ -149,16 +138,17 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
         const size_t mark_bit = 1L << (8 * sizeof(size_t) - 1);
 
         if ((l->ring[w & l->mask].mark & mark_bit) == 0) {
-            UNLOCK(l, lock_id);
+            if (backpressure) { *backpressure = fill_sz; }
             return false;
         }
 
+        LOCK(l, w);
         if (CAS(&l->write, w, w + 1)) {
-            if (backpressure) { *backpressure = fill_sz; }
-            UNLOCK(l, lock_id);
+            UNLOCK(l, w);
             break;
+        } else {
+            UNLOCK(l, w);
         }
-        UNLOCK(l, lock_id);
     }
 
     /* qt = &l->ring[w] is now reserved, and l->write is w + 1. */
@@ -175,10 +165,8 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
 
     qt->mark = w;               /* Mark as committed */
 
-    LOCK(l, lock_id);
     /* Advance commit counter through marked cells. */
     update_marked_commits(l);
-    UNLOCK(l, lock_id);
 
     size_t bp = w - l->done;
     if (backpressure != NULL) { *backpressure = bp; }
@@ -194,10 +182,12 @@ static void update_marked_commits(struct loom *l) {
         const size_t mark = l->ring[c & mask].mark;
         if (mark != c) { break; }
         size_t d = l->done;
+        LOCK(l, c);
         if (CAS(&l->commit, c, c + 1)) {
             if (d > c) { LOG(0, "c %zd, d %zd\n", c, d); }
             assert(d <= c);
         }
+        UNLOCK(l, c);
     }
 }
 
@@ -371,29 +361,37 @@ static bool start_worker_if_necessary(struct loom *l) {
     uint16_t cur = l->cur_threads;
     if (cur == 0 || (cur < l->max_threads
             && l->commit - l->done > l->size / 2)) {
-        
+        size_t lock_id = cur;
+        LOCK(l, lock_id);
         /* First, try to respawn failed threads, if any. */
         for (int i = 0; i < l->max_threads; i++) {
             thread_info *ti = &l->threads[i];
             if (ti->state == LTS_DEAD
                 && CAS(&ti->state, LTS_DEAD, LTS_RESPAWN)) {
                 if (spawn(l, i)) {
+                    UNLOCK(l, lock_id);
                     return true;
-                }                    
+                }
             }
         }
-        
+
         /* Reserve an unused thread slot. */
         for (;;) {
             cur = l->cur_threads;
+            if (cur == l->max_threads) {
+                UNLOCK(l, lock_id);
+                break;          /* another thread maxed out the pool */
+            }
             if (CAS(&l->cur_threads, cur, cur + 1)) {
                 LOG(2, " -- spawning a new worker thread %d\n", cur);
-                return spawn(l, cur);
+                bool res = spawn(l, cur);
+                UNLOCK(l, lock_id);
+                return res;
             }
         }
-    } else {
-        return true;        /* no need to start a new worker thread */
     }
+
+    return true;        /* no need to start a new worker thread */
 }
 
 static bool spawn(struct loom *l, int id) {
@@ -432,6 +430,7 @@ static bool run_tasks(struct loom *l, thread_info *ti) {
             if (r < l->commit && CAS(&l->read, r, r + 1)) {
                 /* &l->ring[r & l->mask] is reserved, and read is r + 1 */
                 if (ti->state == LTS_ASLEEP) { ti->state = LTS_ACTIVE; }
+                UNLOCK(l, r);
 
                 qt = &l->ring[r & l->mask];
 
@@ -450,8 +449,9 @@ static bool run_tasks(struct loom *l, thread_info *ti) {
                 assert(t.task_cb != NULL);
                 t.task_cb(t.env);
                 work = true;
+            } else {
+                UNLOCK(l, r);
             }
-            UNLOCK(l, r);
         }
     }
     return work;
@@ -463,11 +463,13 @@ static void update_marked_done(struct loom *l) {
         size_t d = l->done;
         const size_t mark = l->ring[d & mask].mark;
         if (mark != ~d) { break; }
+        LOCK(l, d);
         if (CAS(&l->done, d, d + 1)) {
             size_t c = l->commit;
             if (d > c) { LOG(0, "c %zd, d %zd\n", c, d); }
             assert(d <= c);
         }
+        UNLOCK(l, d);
     }
 }
 
@@ -481,13 +483,15 @@ static void clean_up_cancelled_tasks(thread_info *ti) {
         if (r == l->commit) { break; }
         LOCK(l, r);
         if (CAS(&l->read, r, r + 1)) {
+            UNLOCK(l, r);
             qt = &l->ring[r & l->mask];
             memcpy(&t, qt, sizeof(t));
             qt->mark = ~r;
             update_marked_done(l);
             if (t.cleanup_cb != NULL) { t.cleanup_cb(t.env); }
+        } else {
+            UNLOCK(l, r);
         }
-        UNLOCK(l, r);
     }
     close(ti->rd_fd);
 }
