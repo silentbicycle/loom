@@ -129,7 +129,11 @@ bool loom_enqueue(struct loom *l, loom_task *t, size_t *backpressure) {
     size_t w = 0;
     for (;;) {
         w = l->write;
-        const size_t fill_sz = l->write - l->done;
+        const size_t fill_sz = w - l->done;
+        if (fill_sz > l->mask) {
+            if (backpressure) { *backpressure = fill_sz; }
+            return false;
+        }
 
         /* Check if the highest bit is set, either because the cell has
          * been memset to all 0xFF the first time around, or because
