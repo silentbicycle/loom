@@ -47,7 +47,7 @@ static benchmark benchmarks[] = {
     {"wakeup", "add tasks w/ delay to stress worker sleep/wakeup",
      bench_wakeup, true, 1000},
     {"multiprod", "stress with multiple producers",
-     bench_multiprod, true, 1000},
+     bench_multiprod, true, 1000000},
 };
 
 static void usage(void) {
@@ -281,7 +281,9 @@ static void pi_delay(config *cfg, struct loom *l, bench_delay_cb delay_cb) {
         for (i = 0; i < RETRIES; i++) {
             if (loom_enqueue(l, &t, &backpressure)) { break; }
             int wait = backpressure >> shift;
-            poll(NULL, 0, i < wait ? i : wait);
+            if (i > 0) {
+                poll(NULL, 0, i < wait ? i : wait);
+            }
         }
         if (i == RETRIES) { assert(false); }
 
@@ -355,7 +357,9 @@ static void bench_wakeup(config *cfg, struct loom *l) {
         for (i = 0; i < RETRIES; i++) {
             if (loom_enqueue(l, &t, &backpressure)) { break; }
             int wait = i;
-            poll(NULL, 0, i < wait ? i : wait);
+            if (i > 0) {
+                poll(NULL, 0, i < wait ? i : wait);
+            }
         }
         if (i == RETRIES) { assert(false); }
 
